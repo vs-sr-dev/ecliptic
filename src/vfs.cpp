@@ -63,7 +63,11 @@ HLE(VFSVolumeEnumerate) {
     uint32_t it = r32(a[1]);
     if (it == 0) {
         std::error_code ec;
-        if (!fs::is_directory(card_root(), ec)) { w16(a[0], 0); w32(a[1], vfsIteratorStop); return expErrEnumerationEmpty; }
+        // The Zodiac always has a volume (its internal card, 'twS0' in the ROM): create an
+        // empty card directory rather than report none (FrodoZ quits without a volume).
+        if (!fs::is_directory(card_root(), ec) && !fs::create_directories(card_root(), ec)) {
+            w16(a[0], 0); w32(a[1], vfsIteratorStop); return expErrEnumerationEmpty;
+        }
         w16(a[0], VOL_REF);
         w32(a[1], vfsIteratorStop);
         return 0;

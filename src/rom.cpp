@@ -79,3 +79,33 @@ bool rom_load(const std::string& path) {
     LOG("ROM %s: %d databases", path.c_str(), count);
     return true;
 }
+
+// ---- ROM code that games call directly ------------------------------------------------------
+// Homebrew titles (Noiz2sa, Spout, Thruster, Outpost, Another World) unlock TwGfx, which the
+// 1.1 ROM restricts to signed applications: they copy the prologue of the ROM's TwGfxOpen and
+// jump past its caller check to 0x200995F0, with aResult in r6 and aInfo in r7. We run our
+// TwGfxOpen there and resume at the function's own epilogue (add sp; pop; bx lr) at 0x200995E4.
+struct RomEntry { uint32_t addr; const char* hle; int regs[4]; int nregs; uint32_t resume; };
+static const RomEntry kRomEntries[] = {
+    {0x200995F0, "TwGfxOpen", {6, 7}, 2, 0x200995E4},
+};
+
+static void hook_rom_entry(uc_engine*, uint64_t address, uint32_t, void* user) {
+    const RomEntry& e = *(const RomEntry*)user;
+    uint32_t v[12] = {};
+    for (int i = 0; i < e.nregs; i++) v[i] = reg(e.regs[i]);
+    Args a{};
+    a.ext = v;
+    HleFn fn = glue_hle(e.hle);
+    uint32_t r = fn ? fn(a) : 0;
+    if (g.opt.trace) LOG("[%7u] ROM %08x -> %s = %x", now_ms(), e.addr, e.hle, r);
+    set_reg(0, r);
+    set_reg(15, e.resume);
+}
+
+void rom_hook_entries() {
+    for (auto& e : kRomEntries) {
+        uc_hook h;
+        uc_hook_add(g.uc, &h, UC_HOOK_CODE, (void*)hook_rom_entry, (void*)&e, e.addr, e.addr);
+    }
+}

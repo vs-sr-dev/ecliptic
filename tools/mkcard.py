@@ -1,7 +1,10 @@
 """Build a virtual SD card per game: cards/<slug>/PALM/Programs/<data folder> (hardlinked files).
 - directories named '<name>-<CRID>' or anything under a 'Programs' directory are copied as-is;
 - loose data files next to a TNA PRC go to that PRC's data directory '<dbname>-<creator>'
-  (or the path in its 'Twdp' #0 resource)."""
+  (or the path in its 'Twdp' #0 resource);
+- Tapwave SimpleInstaller .ini files: every [PalmFileN] with Target=CARD goes to its Folder;
+- folders next to a TNA PRC whose name the native code uses as a path ("data/...") go to its
+  data directory too."""
 import os, re, shutil, sys
 sys.path.insert(0, 'tools'); import prc
 
@@ -38,8 +41,50 @@ def data_dir(prc_path):
             return s
     if not any(t in ('ARMZ', 'ARMC') and i == 1 for t, i, o, d in p['ents']):
         return None
+    # a single data directory hard-coded in the native code wins (Gloopz: creator GPZZ, data in -GLPZ)
+    found = set(m.group(1).decode('latin1') for m in re.finditer(rb'/PALM/Programs/([^/\0]+)/', native_code(prc_path)))
+    if len(found) == 1:
+        return 'PALM/Programs/' + found.pop()
     suffix = '-' + p['creator']
     return 'PALM/Programs/' + p['name'] + ('' if p['name'].endswith(suffix) else suffix)
+
+
+def native_code(prc_path):
+    import gzip
+    try:
+        p = prc.parse(open(prc_path, 'rb').read())
+        for t, i, o, d in p['ents']:
+            if t in ('ARMZ', 'ARMC') and i == 1:
+                return gzip.decompress(d) if t == 'ARMZ' else d
+    except Exception:
+        pass
+    return b''
+
+
+def installer_ini(path, card):
+    """Files listed in a SimpleInstaller .ini: Source (relative to the .ini), Target, Folder."""
+    import configparser
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        cp.read(path, encoding='latin1')
+    except configparser.Error:
+        return 0
+    n = 0
+    for sec in cp.sections():
+        e = cp[sec]
+        if not sec.lower().startswith('palmfile') or e.get('Target', '').upper() != 'CARD' or 'Folder' not in e:
+            continue
+        src = os.path.join(os.path.dirname(path), *e['Source'].split(chr(92)))
+        if not os.path.isfile(src):
+            continue
+        folder = [x for x in e['Folder'].split(chr(92)) if x]
+        if folder and folder[0].upper() == 'PALM':
+            folder[0] = 'PALM'
+            if len(folder) > 1 and folder[1].lower() == 'programs':
+                folder[1] = 'Programs'
+        link(src, os.path.join(card, *folder, os.path.basename(src)))
+        n += 1
+    return n
 
 
 def main():
@@ -60,6 +105,10 @@ def main():
                     print(f'{slug:24} {d}')
                     dirs.remove(d)
             for f in files:
+                if f.lower().endswith('.ini'):
+                    n = installer_ini(os.path.join(root, f), card)
+                    if n:
+                        print(f'{slug:24} {f}  -> {n} files')
                 if not f.lower().endswith('.prc'):
                     continue
                 dd = data_dir(os.path.join(root, f))
@@ -71,6 +120,13 @@ def main():
                     link(os.path.join(root, x), os.path.join(card, *dd.split('/'), x))
                 if loose:
                     print(f'{slug:24} {dd}  <- {len(loose)} loose files')
+                code = native_code(os.path.join(root, f))
+                for d in dirs:
+                    if code and (d + '/').encode() in code:
+                        # a folder named like the data directory is that directory (ZCards)
+                        dst = os.path.join(card, *dd.split('/'), *([] if d == dd.split('/')[-1] else [d]))
+                        link_tree(os.path.join(root, d), dst)
+                        print(f'{slug:24} {dd}  <- folder {d}/')
 
 
 if __name__ == '__main__':

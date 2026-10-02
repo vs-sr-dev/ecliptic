@@ -9,14 +9,16 @@
 
 // ---- Feature Manager ---------------------------------------------------------
 static std::map<std::pair<uint32_t, uint16_t>, uint32_t> g_features;
-static bool ftr_get(uint32_t creator, uint16_t num, uint32_t* v) {
+bool ftr_get(uint32_t creator, uint16_t num, uint32_t* v) {
     auto it = g_features.find({creator, num});
     if (it != g_features.end()) { *v = it->second; return true; }
     if (creator == fourcc("psys")) {
         switch (num) {
-            case 1: *v = 0x05203000; return true;   // sysFtrNumROMVersion: Palm OS 5.2 release
+            case 1: *v = 0x05273002; return true;   // sysFtrNumROMVersion: 5.2.7 release (1.1 ROM at 0x340AC; 1.0 has 5.2.6)
             case 2: *v = fourcc("Tpwv"); return true;   // sysFtrNumProductID (company)
             case 13: *v = 0; return true;           // sysFtrNumProcessorID
+            case 20: *v = fourcc("Tpwv"); return true;  // sysFtrNumOEMCompanyID
+            case 21: *v = fourcc("Rdog"); return true;  // sysFtrNumOEMDeviceID (next to 'Tpwv' in the ROM)
             case 24: *v = 0x00010000; return true;  // sysFtrNumWinVersion (High density)
         }
     }
@@ -41,7 +43,8 @@ HLE(FtrGet) {
     if (a[2]) w32(a[2], v);
     return 0;
 }
-HLE(FtrSet) { g_features[{a[0], (uint16_t)a[1]}] = a[2]; return 0; }
+void ftr_set(uint32_t creator, uint16_t num, uint32_t v) { g_features[{creator, num}] = v; }
+HLE(FtrSet) { ftr_set(a[0], (uint16_t)a[1], a[2]); return 0; }
 HLE(FtrUnregister) { return g_features.erase({a[0], (uint16_t)a[1]}) ? 0 : ftrErrNoSuchFeature; }
 HLE(FtrPtrNew) {
     uint32_t p = heap::alloc(a[2], true);
@@ -106,6 +109,8 @@ HLE(WinGetBounds) {
     return 0;
 }
 HLE(WinSetBounds) { return 0; }
+// Effective coordinate density: kCoordinatesNative (0) is the Zodiac's 1.5x density.
+uint16_t win_coord_system() { return g_coord ? g_coord : 108; }
 HLE(WinSetCoordinateSystem) { uint16_t old = g_coord; g_coord = (uint16_t)a[0]; return old; }
 HLE(WinGetCoordinateSystem) { return g_coord; }
 HLE(WinScreenMode) {
@@ -142,16 +147,18 @@ HLE(WinScreenGetAttribute) {
 static uint32_t palm_seconds() { return (uint32_t)(time(nullptr) + 2082844800u + 0 /* UTC */); }
 // Timing queries are polled constantly by game loops: good, quiet points to refill audio
 // (never inside file or memory calls, where a callback could disturb the caller's state).
-HLE(TimGetTicks) { audio::pump(); return now_ms(); }   // TNA: SysTicksPerSecond() == 1000
+void dal_pump();
+HLE(TimGetTicks) { audio::pump(); dal_pump(); return now_ms(); }   // TNA: SysTicksPerSecond() == 1000
 HLE(TimGetSeconds) { return palm_seconds(); }
 HLE(TwGetMicroSeconds) {
     // UInt64 TwGetMicroSeconds(void) -> r0:r1
     audio::pump();
+    dal_pump();
     uint64_t us = (uint64_t)now_ms() * 1000;
     set_reg(1, (uint32_t)(us >> 32));
     return (uint32_t)us;
 }
-HLE(SysTaskDelay) { host_sleep(a[0]); gfx::frame_tick(); return 0; }
+HLE(SysTaskDelay) { host_sleep(a[0]); dal_pump(); gfx::frame_tick(); return 0; }
 HLE(TimSecondsToDateTime) {
     time_t t = (time_t)a[0] - 2082844800;
     struct tm tmv;

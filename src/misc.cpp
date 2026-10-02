@@ -68,7 +68,11 @@ HLE(TwSecGetFunctions) {
         w32(g_sec_table + 28, thunk_to(glue_extra_trap("x_TwSecVerifyDatabaseWithKey", sec_true)));
         w32(g_sec_table + 32, thunk_to(glue_extra_trap("x_TwSecVerifyPointerOwnership", sec_true)));
     }
-    if (a[2]) w32(a[2], g.code_base);
-    if (a[3]) w32(a[3], g.code_size);
+    // codeStart/codeSize come as a pair: Animated Dudes passes (1, NULL, NULL, &x) and checks
+    // that x is left as it was (Dirty.cpp:127).
+    if (a[2]) {
+        w32(a[2], g.code_base);
+        if (a[3]) w32(a[3], g.code_size);
+    }
     return g_sec_table;
 }

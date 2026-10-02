@@ -37,9 +37,7 @@ def main():
     if not games:
         sys.exit(f'no Tapwave Native Application found in games/{slug}')
     cmd = [os.path.join(ROOT, 'build', 'ecliptic.exe'), games[0]]
-    card = os.path.join(ROOT, 'cards', slug)
-    if os.path.isdir(card):
-        cmd += ['--card', card]
+    cmd += ['--card', os.path.join(ROOT, 'cards', slug)]   # created on first use if missing
     cmd += sys.argv[2:]
     env = dict(os.environ, PATH=r'C:\msys64\mingw64\bin;' + os.environ['PATH'])
     print(' '.join(cmd))

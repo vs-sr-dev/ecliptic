@@ -7,7 +7,7 @@ using namespace layout;
 
 struct GlueEntry { const char* name; int nargs; bool variadic; bool returns; const char* proto; };
 static const GlueEntry kGlue[] = {
-#define GLUE(n, a, v, r, p) {#n, a, v != 0, r[0] != 'v', p},
+#define GLUE(n, a, v, r, p) {#n, a, v != 0, strcmp(r, "void") != 0, p},
 #include "glue_table.inc"
 #undef GLUE
 };
@@ -24,6 +24,10 @@ HleReg::HleReg(const char* name, HleFn fn) { registry()[name] = fn; }
 int glue_index(const char* name) {
     for (int i = 0; i < kGlueCount; i++) if (!strcmp(kGlue[i].name, name)) return i;
     return -1;
+}
+HleFn glue_hle(const char* name) {
+    auto it = registry().find(name);
+    return it == registry().end() ? nullptr : it->second;
 }
 uint32_t glue_slot_addr(const char* name) {
     int i = glue_index(name);
@@ -59,6 +63,15 @@ void glue_init() {
 
 uint32_t glue_extra_trap(const char* name, HleFn fn) {
     uint32_t id = next_extra++;
+    Slot s;
+    s.name = name;
+    s.fn = fn;
+    slots[id] = s;
+    set_trap(id);
+    return TRAP_BASE + id * 4;
+}
+
+uint32_t glue_trap_at(uint32_t id, const char* name, HleFn fn) {
     Slot s;
     s.name = name;
     s.fn = fn;

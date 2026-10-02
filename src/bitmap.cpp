@@ -157,6 +157,8 @@ bool pick(uint32_t p, Bmp& best) {
 
 namespace gfx {
 
+uint32_t palm_index_rgb(int index) { return palm_palette(index & 0xFF); }
+
 bool palm_bitmap_size(uint32_t bmp, int* w, int* h) {
     Bmp b;
     if (!pick(bmp, b)) return false;
@@ -203,3 +205,19 @@ bool draw_palm_bitmap(Surface* d, int dx, int dy, uint32_t bmp, bool use_transpa
 }
 
 }  // namespace gfx
+
+uint16_t win_coord_system();   // sys.cpp
+
+// Dimensions in the coordinate system of the draw window (Palm OS 5 high density rules).
+HLE(WinGetBitmapDimensions) {
+    Bmp b;
+    int w = 0, h = 0;
+    if (a[0] && pick(a[0], b)) {
+        int coord = win_coord_system(), dens = b.density ? b.density : 72;
+        w = b.w * coord / dens;
+        h = b.h * coord / dens;
+    }
+    if (a[1]) w16(a[1], (uint16_t)w);
+    if (a[2]) w16(a[2], (uint16_t)h);
+    return 0;
+}

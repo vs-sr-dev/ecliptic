@@ -6,35 +6,19 @@
 #include <chrono>
 #include <thread>
 #include <cstdlib>
-#include <zlib.h>
+#include "m68k.h"
+#include "tna.h"
 
 Emu g;
 void glue_report();
 bool rom_load(const std::string& path);
+void rom_hook_entries();
+uint32_t dal_init();
 void midi_shutdown();
 
 static auto t0 = std::chrono::steady_clock::now();
 uint32_t now_ms() {
     return (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-}
-
-static std::vector<uint8_t> gunzip(const uint8_t* p, uint32_t n) {
-    std::vector<uint8_t> out;
-    z_stream z{};
-    inflateInit2(&z, 16 + MAX_WBITS);
-    z.next_in = const_cast<uint8_t*>(p);
-    z.avail_in = n;
-    uint8_t buf[65536];
-    int r;
-    do {
-        z.next_out = buf;
-        z.avail_out = sizeof buf;
-        r = inflate(&z, Z_NO_FLUSH);
-        out.insert(out.end(), buf, buf + (sizeof buf - z.avail_out));
-    } while (r == Z_OK);
-    inflateEnd(&z);
-    if (r != Z_STREAM_END) LOG("!! gunzip failed (%d)", r);
-    return out;
 }
 
 static void usage() {
@@ -67,6 +51,7 @@ int main(int argc, char** argv) {
         else if (s == "--ram") ram_dir = next();
         else if (s == "--install") installs.push_back(next());
         else if (s == "--trace") g.opt.trace = true;
+        else if (s == "--no-68k") g.opt.no68k = true;
         else if (s == "--strict") g.opt.strict = true;
         else if (s == "--headless") g.opt.headless = true;
         else if (s == "--scale") g.opt.scale = atoi(next().c_str());
@@ -106,36 +91,20 @@ int main(int argc, char** argv) {
     LOG("app '%s' type %s creator %s, %zu resources", app->name.c_str(), fourcc_str(app->type).c_str(),
         fourcc_str(app->creator).c_str(), app->recs.size());
 
-    // Locate the native code: ARMC #1 or gzipped ARMZ #1.
-    std::vector<uint8_t> code;
-    for (auto& r : app->recs) {
-        if (r.id != 1) continue;
-        uint32_t p = heap::deref(r.h), n = heap::size(p);
-        if (r.type == fourcc("ARMC")) code.assign(host_ptr(p, n), host_ptr(p, n) + n);
-        if (r.type == fourcc("ARMZ")) code = gunzip(host_ptr(p, n), n);
-    }
-    if (code.size() < 72 || memcmp(&code[28], "ANWT", 4) != 0) {
-        LOG("not a Tapwave Native Application (no ARMC/ARMZ #1 with TWNA header)");
+    if (!tna::has_native_code(app, 1)) {
+        LOG("not a Tapwave Native Application (no ARMC/ARMZ #1)");
         return 1;
     }
-    g.code_size = (uint32_t)code.size();
-    g.code_base = heap::alloc(g.code_size);
-    mem_write(g.code_base, code.data(), g.code_size);
-    LOG("TNA code: %u bytes at %08x", g.code_size, g.code_base);
 
     glue_init();
-    cpu_fix_bx_pc_veneers(g.code_base, g.code_size);
-    if (!g.opt.blocks_file.empty()) cpu_trace_blocks(g.code_base, g.code_size);
+    rom_hook_entries();
+    set_reg(9, dal_init());   // Palm OS 5 system globals: module dispatch tables at [r9-4n]
     host_init();
     gfx::init();
     audio::init();
     dm::open(app, 1);   // the running application's database is open (read-only)
-
-    uint32_t call68k = glue_extra_trap("x_Call68KFunc", [](Args& a) -> uint32_t {
-        LOG("!! Call68KFunc(emulState=%x, trap/addr=%x, args=%x, size=%x) not supported", a[0], a[1], a[2], a[3]);
-        return 0;
-    });
-    uint32_t emul_state = heap::alloc(64, true);
+    m68k::init();
+    tna::init(glue_extra_trap("x_Call68KFunc", [](Args& a) -> uint32_t { return m68k::call68k(a[1], a[2], a[3]); }));
 
     // Watchdog: stops the CPU even if the game spins without calling the OS.
     if (g.opt.exit_after_ms >= 0) {
@@ -150,13 +119,14 @@ int main(int argc, char** argv) {
         }).detach();
     }
 
-    // 1st call: emulStateP == NULL, userData = TwGlue table (relocation + runtime init)
-    uint32_t r = cpu_call(g.code_base, {0, g.glue_table, call68k});
-    LOG("TNA init returned %u", r);
-    // 2nd call: normal launch -> PilotMain(sysAppLaunchCmdNormalLaunch, NULL, 0)
-    if (!g.quit) {
-        r = cpu_call(g.code_base, {emul_state, 0, call68k});
-        LOG("PilotMain returned %u", r);
+    // Normal launch: the 68k code #1 sets things up and starts the native code with
+    // TwLoadModule. Fall back to starting the native code directly if it does not.
+    if (!g.opt.no68k) m68k::run_app(app);
+    if (m68k::faulted() && !tna::launched()) g.quit = false;   // fall back below
+    if (!g.quit && !tna::launched()) {
+        if (!g.opt.no68k) LOG("68k launch code did not start the native code; starting it directly");
+        uint32_t entry = tna::load(app, 0, 1);
+        if (entry) tna::run(entry, 0);
     }
     g.done = true;
     if (getenv("ECLIPTIC_DUMP_SURFACES")) gfx::debug_dump_surfaces();

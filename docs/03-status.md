@@ -1,4 +1,4 @@
-# 03 - Status (2026-10-02, end of day 1)
+# 03 - Status (2026-10-02, end of session 2)
 
 Measured with `tools/smoke.py 10` (10 s headless per game, virtual SD card from `tools/mkcard.py`)
 plus a few manual runs with scripted keys. "Menu" means the title screen or main menu renders.
@@ -31,23 +31,26 @@ Deeper gameplay has only been checked where noted.
 | Orbital Sniper | title | |
 | PaintForge | **works** | 2003 preview by Jari Komppa; pen drawing OK. Tools on L trigger (Q), undo/redo on R trigger (E) |
 | Tomb Raider (tr2) | **playable** | confirmed by hand on 2026-10-02 (PS1-style affine texturing/vertex jitter is authentic) |
-| Zodiac Card Casino | black | loops opening files from its `Install/` data, layout to be checked |
-| Gloopz | error | "Could not find data installed on SD/Internal Card" |
-| Animated Dudes | error | `Dirty.cpp:127` |
-| FrodoZ | exits | quits right after start, to investigate |
-| LJZ emulators (7) | partial | need Palm Win/Fnt drawing (WinPaintChars, FntSetFont...) and features set by the 68k LJZ launcher |
-| Noiz2sa, Spout | blocked | need the 68k stub: `FtrGet(crid, 1111/1112)` and Call68KFunc into a 68k `MemChunkNew` wrapper |
-| Thruster, Outpost, Another World | blocked | call DAL ROM functions directly through R9 (`ldr r9,[r9]; ... ldr pc,=0x200995f0`) |
+| Zodiac Card Casino | menu | data goes straight into `/PALM/Programs/ZCards/`; the distributed copy has no `.wav` files. Slow to react to `appStopEvent` (the smoke test's watchdog stops it) |
+| Gloop Zero | menu | data path is hard-coded as `GloopZero-GLPZ` (the creator is `GPZZ`); its 68k stub needs ROM version >= 5.2.7 |
+| Animated Dudes | title | its DRM check (`Dirty.cpp`) wants `TwSecGetFunctions` to leave `*codeSize` alone when `codeStart` is NULL |
+| FrodoZ | C64 BASIC | C64 emulator with built-in replacement ROMs; quits if no card volume exists |
+| LJZ emulators (7) | message | draw "error at opening" with the ROM fonts: they need the `'LJZZ'` 6000+ features set by the 68k LJZ launcher, which needs a Form Manager. LJZ-NGP crashes after the message |
+| Noiz2sa | title | 68k stub (features 1111/1112, Call68KFunc into a 68k `MemChunkNew` wrapper) + TwGfx unlock |
+| Spout | title | same port family as Noiz2sa; its `Twdp` points at Noiz2sa's folder for sounds (a bug of the port) |
+| Thruster | menu | TwGfx unlock (jump into the ROM's `TwGfxOpen` past its signed-app check) |
+| Outpost | gameplay | TwGfx unlock |
+| Another World | title | TwGfx unlock, 68k launcher with VFS calls, r9 DAL/Boot calls (mutexes, timers, `WinEraseWindow`) |
 
 ## Known gaps / next steps
 
-1. **PACE-lite (68k)**: run the 68k `code` #1 stub with Unicorn m68k and HLE Palm traps. This
-   unlocks the "PD" ports (Noiz2sa, Spout), the LJZ launcher flow and, later, generic 68k Palm
-   games (Bejeweled 2, Zuma, SimCity...).
-2. **R9 system globals**: work out the Palm OS 5 ARM dispatch tables (`[r9-4]`, `[r9-8]`...) from
-   the ROM and HLE the DAL/Boot/UI entry points that games call directly.
-3. **Palm Window Manager + fonts**: Win* drawing, FntSetFont/WinPaintChars using the ROM fonts.
-   Needed for LJZ and Another World, and generally for homebrew UIs.
+1. **Form Manager** for 68k applications: forms (`tFRM`), controls, lists, fields, menus, with
+   the 68k event loop. This runs the LJZ launcher (which sets the `'LJZZ'` features the LJZ
+   emulators read) and is the next step towards generic 68k Palm games (Bejeweled 2, Zuma...).
+2. More of the Window Manager: offscreen windows, bitmaps (`WinPaintBitmap`), lines, frames,
+   `WinDrawChars` for 68k code; 68k `BmpGetBits` on real bitmaps.
+3. r9 module tables: only the 9 entries Another World uses are known. A complete map would come
+   from PACE's trap-to-ARM table in the ROM.
 4. Confirm uncertain semantics against the ROM implementation (TAL): the
    `TwGetDBDataDirectory` naming rule, input axis signs, `TwGfxBlendBlt` rounding.
 5. Bluetooth (BtLib*) and TwMp multiplayer are stubs.

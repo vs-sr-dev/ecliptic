@@ -16,7 +16,7 @@ constexpr uint32_t STACK_BASE = 0x0FE00000, STACK_SIZE = 0x00200000;  // 2 MB, g
 constexpr uint32_t RAM_BASE   = 0x10000000, RAM_SIZE   = 0x08000000;  // 128 MB heap
 constexpr uint32_t SYS_AREA = RAM_BASE, SYS_AREA_SIZE = 0x20000;       // "ROM" tables some games range-check
 constexpr uint32_t HANDLE_TABLE = RAM_BASE + SYS_AREA_SIZE, HANDLE_SLOTS = 0x10000;    // master pointers
-constexpr uint32_t HEAP_START = RAM_BASE + HANDLE_SLOTS * 4;
+constexpr uint32_t HEAP_START = HANDLE_TABLE + HANDLE_SLOTS * 4;
 constexpr uint32_t ROM_BASE   = 0x20000000, ROM_SIZE   = 0x00800000;  // device ROM, as on the Zodiac
 constexpr uint32_t THUNK_AREA = ROM_BASE + ROM_SIZE - 0x1000;            // our code thunks (unused ROM tail)
 constexpr uint32_t VRAM_BASE  = 0x30000000, VRAM_SIZE  = 0x00800000;  // 8 MB (Imageon W4200)
@@ -37,6 +37,7 @@ struct Options {
     std::string card_dir = "card";      // host directory mounted as the SD card volume
     std::string rom_path;               // Zodiac ROM image (databases, DRM ranges)
     bool trace = false;                 // log every TwGlue call
+    bool no68k = false;                 // do not run the 68k launch code
     bool strict = false;                // stop on unimplemented calls
     bool headless = false;
     int scale = 2;
@@ -80,6 +81,11 @@ void wstr(uint32_t a, const std::string& s);  // writes with NUL
 void mem_read(uint32_t a, void* dst, uint32_t n);
 void mem_write(uint32_t a, const void* src, uint32_t n);
 void mem_fill(uint32_t a, uint8_t v, uint32_t n);
+// Big-endian accessors for 68k data structures
+inline uint16_t rb16(uint32_t a) { uint16_t v = r16(a); return (uint16_t)(v >> 8 | v << 8); }
+inline uint32_t rb32(uint32_t a) { return __builtin_bswap32(r32(a)); }
+inline void wb16(uint32_t a, uint16_t v) { w16(a, (uint16_t)(v >> 8 | v << 8)); }
+inline void wb32(uint32_t a, uint32_t v) { w32(a, __builtin_bswap32(v)); }
 
 // ---------------------------------------------------------------------------
 // Heap (MemPtr / MemHandle)
@@ -123,7 +129,8 @@ void cpu_dump_blocks(const std::string& path);
 struct Args {
     uint32_t r[4];
     uint32_t sp;
-    uint32_t operator[](int i) const { return i < 4 ? r[i] : r32(sp + (i - 4) * 4); }  // AAPCS
+    const uint32_t* ext = nullptr;   // all arguments as values (68k trap forwarding)
+    uint32_t operator[](int i) const { return ext ? ext[i] : i < 4 ? r[i] : r32(sp + (i - 4) * 4); }  // AAPCS
 };
 using HleFn = uint32_t (*)(Args&);
 struct HleReg { HleReg(const char* name, HleFn fn); };
@@ -134,8 +141,10 @@ struct HleReg { HleReg(const char* name, HleFn fn); };
 
 void glue_init();                          // builds TwGlue table in emulated RAM
 uint32_t glue_extra_trap(const char* name, HleFn fn);  // returns ARM address of a new trap
+uint32_t glue_trap_at(uint32_t id, const char* name, HleFn fn);  // trap with a fixed id (< 0x4000)
 void glue_dispatch(uint32_t trap_id);
 int glue_index(const char* name);
+HleFn glue_hle(const char* name);            // ARM-side HLE handler by slot name (nullptr if none)
 uint32_t glue_slot_addr(const char* name);   // trap address for a glue slot by name
 uint32_t sys_area_alloc(uint32_t size);      // memory in the low "ROM" area
 uint32_t thunk_to(uint32_t target);          // "ldr pc,=target" stub inside THUNK_AREA
