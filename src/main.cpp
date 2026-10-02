@@ -17,6 +17,12 @@ uint32_t dal_init();
 void midi_shutdown();
 
 static auto t0 = std::chrono::steady_clock::now();
+void request_stop(const char* why) {
+    if (g.stop_requested) return;
+    g.stop_time = now_ms();
+    g.stop_requested = true;
+    LOG("%s: asking the application to quit", why);
+}
 uint32_t now_ms() {
     return (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -29,6 +35,7 @@ static void usage() {
             "  --ram DIR           where databases created by the game are saved (default: ram)\n"
             "  --install FILE      extra PRC/PDB to load into RAM (repeatable)\n"
             "  --trace             log every TwGlue call\n"
+            "  --no-frame-cap      do not cap full-screen display updates at 60 per second\n"
             "  --strict            stop at the first unimplemented call\n"
             "  --headless          no window\n"
             "  --scale N           window scale (default 2)\n"
@@ -52,6 +59,7 @@ int main(int argc, char** argv) {
         else if (s == "--install") installs.push_back(next());
         else if (s == "--trace") g.opt.trace = true;
         else if (s == "--no-68k") g.opt.no68k = true;
+        else if (s == "--no-frame-cap") g.opt.frame_cap = false;
         else if (s == "--strict") g.opt.strict = true;
         else if (s == "--headless") g.opt.headless = true;
         else if (s == "--scale") g.opt.scale = atoi(next().c_str());
@@ -106,18 +114,20 @@ int main(int argc, char** argv) {
     m68k::init();
     tna::init(glue_extra_trap("x_Call68KFunc", [](Args& a) -> uint32_t { return m68k::call68k(a[1], a[2], a[3]); }));
 
-    // Watchdog: stops the CPU even if the game spins without calling the OS.
-    if (g.opt.exit_after_ms >= 0) {
-        std::thread([] {
-            while (now_ms() < (uint32_t)g.opt.exit_after_ms + 1500) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            if (!g.done) {
-                LOG("watchdog: stopping CPU (pc=code+%x)", reg(15) - g.code_base);
+    // Watchdog: --exit-after even if the game never calls the OS, and the hard stop when an
+    // application has not quit 3 s after the stop request.
+    std::thread([] {
+        while (!g.done) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (g.opt.exit_after_ms >= 0 && now_ms() >= (uint32_t)g.opt.exit_after_ms) request_stop("exit-after reached");
+            if (g.stop_requested && !g.quit && !g.done && now_ms() - g.stop_time > 3000) {
+                LOG("watchdog: the application did not quit, stopping the CPU (pc=code+%x)", reg(15) - g.code_base);
                 g.quit = true;
                 g.watchdog_fired = true;
                 uc_emu_stop(g.uc);
             }
-        }).detach();
-    }
+        }
+    }).detach();
 
     // Normal launch: the 68k code #1 sets things up and starts the native code with
     // TwLoadModule. Fall back to starting the native code directly if it does not.

@@ -31,16 +31,16 @@ Deeper gameplay has only been checked where noted.
 | Orbital Sniper | title | |
 | PaintForge | **works** | 2003 preview by Jari Komppa; pen drawing OK. Tools on L trigger (Q), undo/redo on R trigger (E) |
 | Tomb Raider (tr2) | **playable** | confirmed by hand on 2026-10-02 (PS1-style affine texturing/vertex jitter is authentic) |
-| Zodiac Card Casino | menu | data goes straight into `/PALM/Programs/ZCards/`; the distributed copy has no `.wav` files. Slow to react to `appStopEvent` (the smoke test's watchdog stops it) |
-| Gloop Zero | menu | data path is hard-coded as `GloopZero-GLPZ` (the creator is `GPZZ`); its 68k stub needs ROM version >= 5.2.7 |
-| Animated Dudes | title | its DRM check (`Dirty.cpp`) wants `TwSecGetFunctions` to leave `*codeSize` alone when `codeStart` is NULL |
+| Zodiac Card Casino | menu | data goes straight into `/PALM/Programs/ZCards/`; the distributed copy has no `.wav` files. Its sub-loops ignore the quit request (stopped after 3 s) |
+| Gloop Zero | **playable** | confirmed by hand on 2026-10-02; data path is hard-coded as `GloopZero-GLPZ` (the creator is `GPZZ`); its 68k stub needs ROM version >= 5.2.7 |
+| Animated Dudes | **playable** | confirmed by hand on 2026-10-02; its DRM check (`Dirty.cpp`) wants `TwSecGetFunctions` to leave `*codeSize` alone when `codeStart` is NULL |
 | FrodoZ | C64 BASIC | C64 emulator with built-in replacement ROMs; quits if no card volume exists |
 | LJZ emulators (7) | message | draw "error at opening" with the ROM fonts: they need the `'LJZZ'` 6000+ features set by the 68k LJZ launcher, which needs a Form Manager. LJZ-NGP crashes after the message |
-| Noiz2sa | title | 68k stub (features 1111/1112, Call68KFunc into a 68k `MemChunkNew` wrapper) + TwGfx unlock |
-| Spout | title | same port family as Noiz2sa; its `Twdp` points at Noiz2sa's folder for sounds (a bug of the port) |
-| Thruster | menu | TwGfx unlock (jump into the ROM's `TwGfxOpen` past its signed-app check) |
-| Outpost | gameplay | TwGfx unlock |
-| Another World | title | TwGfx unlock, 68k launcher with VFS calls, r9 DAL/Boot calls (mutexes, timers, `WinEraseWindow`) |
+| Noiz2sa | **playable** | confirmed by hand on 2026-10-02; 68k stub (features 1111/1112, Call68KFunc into a 68k `MemChunkNew` wrapper) + TwGfx unlock |
+| Spout | **works** | starts and runs (2026-10-02); same port family as Noiz2sa; its `Twdp` points at Noiz2sa's folder for sounds (a bug of the port) |
+| Thruster | **playable** | confirmed by hand on 2026-10-02; TwGfx unlock (jump into the ROM's `TwGfxOpen` past its signed-app check) |
+| Outpost | **playable** | confirmed by hand on 2026-10-02; TwGfx unlock; no frame limiter of its own (capped at 60 fps) |
+| Another World | **playable** | confirmed by hand on 2026-10-02; TwGfx unlock, 68k launcher with VFS calls, r9 DAL/Boot calls (mutexes, timers, `WinEraseWindow`) |
 
 ## Known gaps / next steps
 

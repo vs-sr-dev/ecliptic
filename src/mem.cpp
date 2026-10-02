@@ -96,7 +96,7 @@ static void release(uint32_t a, uint32_t sz) {
 
 void free(uint32_t p) {
     auto it = used.find(p);
-    if (it == used.end()) { LOG("!! free of unknown pointer %08x", p); return; }
+    if (it == used.end()) { LOG("!! free of unknown pointer %08x (lr=code+%x)", p, reg(14) - g.code_base); return; }
     uint32_t sz = align8(it->second.size ? it->second.size : 1);
     used.erase(it);
     release(p, sz);

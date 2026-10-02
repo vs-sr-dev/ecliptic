@@ -1,5 +1,6 @@
 // TwGlue dispatch table: every slot points at an svc stub in the trap page.
 #include "emu.h"
+#include "gfx.h"
 #include <map>
 #include <set>
 
@@ -112,9 +113,13 @@ void glue_dispatch(uint32_t id) {
             const char* proto = id < (uint32_t)kGlueCount ? kGlue[id].proto : s.name.c_str();
             LOG("UNIMPL [%u] %s  args=%x,%x,%x,%x lr=code+%x", id, proto, a[0], a[1], a[2], a[3], lr - g.code_base);
         }
-        if (g.opt.strict) { g.quit = true; return; }
+        if (g.opt.strict) g.quit = true;
     }
-    if (g.quit) return;
+    // Complete the call even when quitting (hook_trap then stops the CPU): an aborted call
+    // returned a stale r0 and some games spun on it until the forced exit (Card Casino).
+    // Show the screen regularly even if the game only writes the framebuffer directly (Noiz2sa
+    // draws through BmpGetBits); frame_tick presents at most every 16 ms.
+    gfx::frame_tick();
     set_reg(0, ret);
     // Return explicitly: after a nested emulation Unicorn would otherwise resume at the trap
     // address and run the hook again. Bit 0 of LR selects Thumb.

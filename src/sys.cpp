@@ -148,13 +148,13 @@ static uint32_t palm_seconds() { return (uint32_t)(time(nullptr) + 2082844800u +
 // Timing queries are polled constantly by game loops: good, quiet points to refill audio
 // (never inside file or memory calls, where a callback could disturb the caller's state).
 void dal_pump();
-HLE(TimGetTicks) { audio::pump(); dal_pump(); return now_ms(); }   // TNA: SysTicksPerSecond() == 1000
+HLE(TimGetTicks) { audio::pump(); dal_pump(); return uptime_ms(); }   // TNA: SysTicksPerSecond() == 1000
 HLE(TimGetSeconds) { return palm_seconds(); }
 HLE(TwGetMicroSeconds) {
     // UInt64 TwGetMicroSeconds(void) -> r0:r1
     audio::pump();
     dal_pump();
-    uint64_t us = (uint64_t)now_ms() * 1000;
+    uint64_t us = (uint64_t)uptime_ms() * 1000;
     set_reg(1, (uint32_t)(us >> 32));
     return (uint32_t)us;
 }

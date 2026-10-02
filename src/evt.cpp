@@ -73,7 +73,15 @@ static void poll_input() {
         g_queue.push_back(e);
         g_prev_pen = g_input.pen_down;
     }
-    if (g.quit && !g_stop_sent) {
+    // Quitting works like the Home button: the application sees keyDown vchrLaunch first (many
+    // games quit on it, e.g. Tomb Raider), SysHandleEvent turns it into appStopEvent. If nobody
+    // has passed it to SysHandleEvent after 1 s, appStopEvent is posted directly.
+    static bool home_sent = false;
+    if ((g.quit || g.stop_requested) && !home_sent) {
+        home_sent = true;
+        push_key(0x0108);   // vchrLaunch
+    }
+    if ((g.quit || (g.stop_requested && now_ms() - g.stop_time > 1000)) && !g_stop_sent) {
         g_stop_sent = true;
         g_queue.push_back(make_event(appStopEvent));
     }
@@ -84,7 +92,7 @@ static void get_event(uint32_t evP, int32_t timeout) {
     poll_input();
     uint32_t start = now_ms();
     while (g_queue.empty()) {
-        if (timeout == 0 || g.quit) break;
+        if (timeout == 0 || g.quit || g.stop_requested) break;
         if (timeout > 0 && now_ms() - start >= (uint32_t)timeout) break;
         host_sleep(1);
         gfx::frame_tick();
@@ -135,7 +143,7 @@ HLE(KeySetMask) { uint32_t old = g_key_mask; g_key_mask = a[0]; return old; }
 static uint16_t ev_type(uint32_t evP) { return r16(evP); }
 static bool sys_handle(uint32_t evP) {
     if (ev_type(evP) == keyDownEvent && r16(evP + 8) == 0x0108) {   // Home -> quit the app
-        g_queue.push_back(make_event(appStopEvent));
+        if (!g_stop_sent) { g_stop_sent = true; g_queue.push_back(make_event(appStopEvent)); }
         return true;
     }
     return false;
@@ -192,16 +200,9 @@ HLE(TwAppRun) {
         static int32_t last_timeout = 12345;
         if (g.opt.trace && timeout != last_timeout) { LOG("  TwAppRun timeout = %d", timeout); last_timeout = timeout; }
         get_event(evP, timeout);
-        if (!sys_handle(evP) && !frm_dispatch(evP)) {
-            if (ev_type(evP) == appStopEvent) break;
-        }
-        if (g.quit && g_stop_sent && g_queue.empty() && ev_type(evP) == appStopEvent) break;
-        if (g.quit && now_ms() > 0 && !g_form_handler) break;
-        static uint32_t quit_time = 0;
-        if (g.quit) {
-            if (!quit_time) quit_time = now_ms();
-            else if (now_ms() - quit_time > 2000) { LOG("app did not stop, forcing exit"); break; }
-        }
+        if (!sys_handle(evP)) frm_dispatch(evP);
+        // The loop ends with appStopEvent, after the form handler has seen it.
+        if (ev_type(evP) == appStopEvent || g.quit) break;
     }
     heap::free(evP);
     heap::free(errP);
@@ -250,7 +251,7 @@ static int32_t input_value(int32_t f, uint32_t seq) {
         case 287: return !!(k & 0x80000);
         case 288: return !!(k & 0x100000);
         case 290: case 291: case 292: case 293: return 0;
-        case 294: return (int32_t)now_ms();
+        case 294: return (int32_t)uptime_ms();
         case 295: return (int32_t)seq;
         // Polar stick: R in 0..32767, Theta in degrees 0..359. The Programmer's Reference says
         // "counter-clockwise from the right", but Xploids (verified by hand) expects screen

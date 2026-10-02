@@ -407,7 +407,7 @@ TRAP68(0xA348, FileSystemDispatch) {
 
 // ---- misc ---------------------------------------------------------------------------------
 // 68k code sees the classic 100 Hz tick (TNA code gets 1000 Hz through TwGlue).
-TRAP68(0xA0F7, TimGetTicks) { return now_ms() / 10; }
+TRAP68(0xA0F7, TimGetTicks) { return uptime_ms() / 10; }
 TRAP68(0xA2E9, SysTicksPerSecond) { return 100; }
 TRAP68(0xA0C2, SysRandom) {   // Palm OS linear congruential generator, 0..sysRandomMax
     static uint32_t seed = 1;

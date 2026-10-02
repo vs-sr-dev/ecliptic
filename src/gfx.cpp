@@ -3,6 +3,8 @@
 #include "host.h"
 #include "palmos.h"
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <map>
 #include <vector>
 
@@ -84,6 +86,19 @@ void debug_dump_surfaces() {
     }
 }
 
+// Full-screen updates of the display are capped at 60 per second. Some games have no frame
+// limiter and ran as fast as the device could draw (Outpost); on a PC they would run at
+// hundreds of frames per second.
+static void pace_frame() {
+    using clk = std::chrono::steady_clock;
+    static clk::time_point next{};
+    if (!g.opt.frame_cap) return;
+    auto now = clk::now();
+    if (now < next) std::this_thread::sleep_until(next);
+    next = std::max(now, next) + std::chrono::microseconds(16667);
+    frame_tick();
+}
+
 void frame_tick() {
     uint32_t t = now_ms();
     if (t - g_last_frame >= 16) { g_last_frame = t; host_present(); }
@@ -153,6 +168,7 @@ static uint32_t blit(Surface* d, int dx, int dy, Surface* s, Rect sr, Op op) {
         int relx = ox - sr.x, rely = oy - sr.y + y;
         for (int x = 0; x < rc.w; x++) op(dp + x, sp[x], relx + x, rely);
     }
+    if (d->display && rc.w * rc.h * 4 >= d->w * d->h * 3) pace_frame();   // a whole new frame
     return 0;
 }
 

@@ -73,10 +73,7 @@ void host_save_screenshot(const std::string& path) {
 }
 
 static void check_exit() {
-    if (g.opt.exit_after_ms >= 0 && now_ms() >= (uint32_t)g.opt.exit_after_ms && !g.quit) {
-        LOG("exit-after %ld ms reached", g.opt.exit_after_ms);
-        g.quit = true;
-    }
+    if (g.opt.exit_after_ms >= 0 && now_ms() >= (uint32_t)g.opt.exit_after_ms) request_stop("exit-after reached");
 }
 
 // Keyboard -> Zodiac controls
@@ -147,7 +144,12 @@ bool host_pump() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
-            case SDL_QUIT: g.quit = true; break;
+            case SDL_QUIT:
+                // Close at once for the user; the application gets up to 3 s to quit by itself.
+                if (win) SDL_HideWindow(win);
+                audio::silence();
+                request_stop("window closed");
+                break;
             case SDL_KEYDOWN: if (!e.key.repeat) g_kbd_keys |= key_bit(e.key.keysym.scancode); break;
             case SDL_KEYUP: g_kbd_keys &= ~key_bit(e.key.keysym.scancode); break;
             case SDL_MOUSEBUTTONDOWN: if (e.button.button == SDL_BUTTON_LEFT) g_mouse_down = 1; break;

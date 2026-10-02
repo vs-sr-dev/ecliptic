@@ -38,6 +38,7 @@ struct Options {
     std::string rom_path;               // Zodiac ROM image (databases, DRM ranges)
     bool trace = false;                 // log every TwGlue call
     bool no68k = false;                 // do not run the 68k launch code
+    bool frame_cap = true;              // at most 60 full-screen display updates per second
     bool strict = false;                // stop on unimplemented calls
     bool headless = false;
     int scale = 2;
@@ -60,6 +61,10 @@ struct Emu {
     volatile bool quit = false;
     volatile bool done = false;
     volatile bool watchdog_fired = false;
+    // Quitting has two steps: a stop request posts appStopEvent and lets the application quit
+    // by itself (saving its data); `quit` is the hard stop that halts the CPU.
+    volatile bool stop_requested = false;
+    volatile uint32_t stop_time = 0;
     int nest = 0;
     uint32_t glue_table = 0;
     uint32_t code_base = 0, code_size = 0;
@@ -154,3 +159,8 @@ uint32_t thunk_to(uint32_t target);          // "ldr pc,=target" stub inside THU
 // ---------------------------------------------------------------------------
 #define LOG(...) do { fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); } while (0)
 uint32_t now_ms();   // emulated milliseconds since start
+// Milliseconds since the emulated device was reset, as games see it: the Zodiac has been on for
+// a while when a game starts (Zodiac Card Casino waits until TimGetTicks() >= 5000).
+constexpr uint32_t BOOT_UPTIME_MS = 60000;
+inline uint32_t uptime_ms() { return now_ms() + BOOT_UPTIME_MS; }
+void request_stop(const char* why);   // first step of quitting (main.cpp)

@@ -273,6 +273,12 @@ HLE(SndPlayResource) {
 // ---- Tapwave primary volume ------------------------------------------------------------
 HLE(TwSndGetVolume) { return g_master; }
 HLE(TwSndSetVolume) { if (a[0] > 64) return sysErrParamErr; g_master = (uint16_t)a[0]; return 0; }
+namespace audio {
+void silence() {
+    g_mute = true;
+    if (g_dev) { SDL_PauseAudioDevice(g_dev, 1); SDL_ClearQueuedAudio(g_dev); }
+}
+}
 HLE(TwSndSetMute) { g_mute = a[0] & 0xFF; return 0; }
 HLE(TwSndGetMute) { if (a[0]) w32(a[0], 0); return g_mute; }
 HLE(TwSndGetBassBoost) { return 0; }

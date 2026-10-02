@@ -102,6 +102,18 @@ sampled from the 144 dpi strike. The offset/width table holds `{offset, width}` 
   render until their window gets focus.
 - `winDisplayChangedEvent` (0x4101) is posted after `SysSetOrientation`, `PINSetInputAreaState` and
   `StatHide`. Xploids waits for it before it starts.
+- Time: `TimGetTicks` and `TwGetMicroSeconds` count from a reset one minute before the game
+  starts. Zodiac Card Casino waits until `TimGetTicks() >= 5000` on its splash screen.
+- The window is presented at most every 16 ms from the TwGlue dispatcher, so games that only
+  write the framebuffer (Noiz2sa, Spout) or busy-wait on the clock still update the screen.
+- Full-screen updates of the display (a blit covering at least 3/4 of it) are capped at 60 per
+  second (`--no-frame-cap` to disable). Outpost has no working frame limiter: it mixes
+  `TimGetTicks` (ms) and `TwGetMicroSeconds` (us), so on the device only the hardware held it back.
+- Quitting works like the Home button: closing the window hides it at once, posts keyDown
+  `vchrLaunch` (several games quit on it, e.g. Tomb Raider), then `appStopEvent` after 1 s if
+  nobody passed the key to `SysHandleEvent`. The application gets 3 s to quit by itself, then
+  the CPU is stopped. Games that loop without OS calls (Spout) or ignore the stop in sub-loops
+  (Card Casino) end that way.
 - Features: `sysFtrNumROMVersion` is `0x05273002` (Palm OS 5.2.7, from the 1.1 ROM; the 1.0 ROM
   has 5.2.6), OEM company `'Tpwv'`, device `'Rdog'`. Launch stubs check the version.
 - The SD card volume always exists (the Zodiac has an internal card): a missing card directory is
