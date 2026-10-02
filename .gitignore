@@ -1,0 +1,15 @@
+# build output
+build/
+
+# copyrighted material and local data (never commit)
+*.zip
+archive/
+ref/
+games/
+cards/
+ram/
+card/
+
+# scratch output
+shots/
+__pycache__/
