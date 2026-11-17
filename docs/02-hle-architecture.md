@@ -76,11 +76,31 @@ Manager, which does not exist yet.
 
 **r9 module tables.** Palm OS 5 native code reaches the system modules with
 `ldr ip, [r9, #-4n]; ldr pc, [ip, #4i]`: r9 points past the dispatch tables of DAL (`[r9-4]`),
-Boot (`[r9-8]`) and UI (`[r9-12]`). r9 is set to such a block before any native code runs; every
-entry is a trap named `DAL#146` etc. The few entries games use are implemented in `src/dal.cpp`,
-named from how the games use them (only Another World so far): DAL mutexes (146-149, sharing the
-TwSemaphore state), DAL timers (169-171, fired at safe points like the audio pump), Boot 518 (queue
-an event), Boot 726 (`WinEraseWindow`).
+Boot (`[r9-8]`), UI (`[r9-12]`) and the Tapwave Application Layer's exports (`[r9-16]`; field 2 of
+a module's `amdc` header is its table offset: UI 0x8, TAL 0xC). r9 is set to such a block before
+any native code runs.
+
+**TwGlue map from the ROM.** On the device, TAL fills the TwGlue table at runtime in one function
+(1.1 ROM `0x201F70C8`) that stores a pc-relative address into each slot. `tools/gen_r9map.py`
+evaluates it statically and writes `docs/twglue-rom-map.tsv`:
+
+| Slot target | Slots |
+|---|---|
+| r9 stub into Boot / DAL / UI / TAL | 357 / 62 / 8 / 39 |
+| lazy library stub (`[[[r9]+0xC]+G] + 4n`, loaded on first use): BtLib, Zlib, Midi, TwMp, JPEG | 52 / 23 / 17 / 13 / 10 |
+| function inside TAL (sockets, `WinPaintBitmap`, `MenuHandleEvent`...) | 31 |
+
+The r9 stubs pass arguments through unchanged, so an r9 entry they reach is the TwGlue function:
+`src/r9_map.inc` (also generated) makes those 466 entries reuse the TwGlue slot's trap. Frond's
+LLE call log (Doom II, Another World) shows the same pairs, e.g. MemMove = Boot 342, TwInputPoll =
+DAL 273. Oddity: the ROM points `BtLibServicePlaySound` at the same BtLib entry as
+`BtLibLinkDisconnect`.
+
+Entries no TwGlue slot reaches are traps named `DAL#146` etc.; the few games use are implemented
+in `src/dal.cpp`, named from how the games use them (only Another World so far): DAL mutexes
+(146-149, sharing the TwSemaphore state), DAL timers (169-171, fired at safe points like the audio
+pump), Boot 726 (`WinEraseWindow`). Boot 518, Another World's quit event, turned out to be
+`EvtAddUniqueEventToQueue` (slot 553).
 
 **ROM entry points.** Homebrew titles unlock TwGfx, which the 1.1 ROM restricts to signed
 applications: they copy the prologue of the ROM's `TwGfxOpen` and jump past its caller check to

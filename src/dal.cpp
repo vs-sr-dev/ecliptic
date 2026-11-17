@@ -1,9 +1,12 @@
 // Palm OS 5 system calls made through r9 instead of TwGlue.
 //
 // Native Palm OS 5 code reaches the system modules with "ldr ip, [r9, #-4*n]; ldr pc, [ip, #4*i]":
-// r9 points just past a list of module dispatch tables ([r9-4] DAL, [r9-8] Boot, [r9-12] UI).
-// Every entry of our tables is a trap; the few functions games use are implemented here.
-// Names are inferred from how the games call them (only Another World uses these today).
+// r9 points just past a list of module dispatch tables ([r9-4] DAL, [r9-8] Boot, [r9-12] UI,
+// [r9-16] the Tapwave Application Layer's exports). Every entry of our tables is a trap.
+// In the real ROM most TwGlue slots are stubs that jump straight into one of these tables, so
+// those entries reuse the TwGlue slot's trap (src/r9_map.inc, from tools/gen_r9map.py). The few
+// entries no TwGlue slot reaches are implemented here, with names inferred from how the games
+// call them (only Another World uses them today).
 #include "palmos.h"
 #include "audio.h"
 #include <map>
@@ -14,7 +17,13 @@ namespace {
 
 constexpr uint32_t kTrapBase = 0x1000;   // trap ids 0x1000 + module * 0x400 + index
 constexpr int kEntries = 0x400;
-const char* const kModules[] = {"DAL", "Boot", "UI"};
+const char* const kModules[] = {"DAL", "Boot", "UI", "TAL"};
+constexpr int kModuleCount = 4;
+
+struct GlueAlias { int module, index; const char* slot; };
+const GlueAlias kGlueAliases[] = {
+#include "r9_map.inc"
+};
 
 uint32_t call(const char* name, std::initializer_list<uint32_t> vals) {
     HleFn fn = glue_hle(name);
@@ -55,7 +64,8 @@ uint32_t timer_schedule(Args& a) {
 }
 
 // ---- Boot / UI ----------------------------------------------------------------------------
-uint32_t evt_enqueue(Args& a) { return call("EvtAddEventToQueue", {a[0]}); }   // (eventP, ?, ?)
+// (Boot 518, which Another World uses to post its quit event, is EvtAddUniqueEventToQueue:
+// TwGlue slot 553 jumps there, so it comes from r9_map.inc.)
 uint32_t win_erase_window(Args&) { return call("x_WinEraseWindow", {}); }
 
 struct SysFn { int module, index; const char* name; HleFn fn; };
@@ -67,7 +77,6 @@ const SysFn kSysFns[] = {
     {0, 169, "TimerCreate", timer_create},
     {0, 170, "TimerDelete", timer_delete},
     {0, 171, "TimerSchedule", timer_schedule},
-    {1, 518, "EvtEnqueue", evt_enqueue},          // a keyDown vchrLaunch event (quit)
     {1, 726, "WinEraseWindow", win_erase_window},
 };
 
@@ -75,10 +84,11 @@ const SysFn kSysFns[] = {
 
 // Builds the dispatch tables and returns the value for r9.
 uint32_t dal_init() {
-    uint32_t block = heap::alloc(16 + 3 * 4, true);
-    uint32_t r9 = block + 3 * 4;
+    uint32_t block = heap::alloc(16 + kModuleCount * 4, true);
+    uint32_t r9 = block + kModuleCount * 4;
     w32(r9, r9);   // some homebrew code dereferences r9 twice before jumping into the ROM
-    for (int m = 0; m < 3; m++) {
+    int aliased = 0;
+    for (int m = 0; m < kModuleCount; m++) {
         uint32_t table = heap::alloc(kEntries * 4, true);
         w32(r9 - 4 * (m + 1), table);
         for (int i = 0; i < kEntries; i++) {
@@ -87,9 +97,16 @@ uint32_t dal_init() {
             HleFn fn = nullptr;
             for (auto& f : kSysFns)
                 if (f.module == m && f.index == i) { snprintf(name, sizeof name, "%s_%s", kModules[m], f.name); fn = f.fn; }
-            w32(table + i * 4, glue_trap_at(kTrapBase + m * kEntries + i, name, fn));
+            uint32_t addr = 0;
+            if (!fn)
+                for (auto& al : kGlueAliases)
+                    if (al.module == m && al.index == i) { addr = glue_slot_addr(al.slot); break; }
+            if (addr) aliased++;
+            else addr = glue_trap_at(kTrapBase + m * kEntries + i, name, fn);
+            w32(table + i * 4, addr);
         }
     }
+    LOG("r9 tables: %d entries share a TwGlue slot", aliased);
     return r9;
 }
 

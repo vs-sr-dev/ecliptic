@@ -49,8 +49,9 @@ Deeper gameplay has only been checked where noted.
    emulators read) and is the next step towards generic 68k Palm games (Bejeweled 2, Zuma...).
 2. More of the Window Manager: offscreen windows, bitmaps (`WinPaintBitmap`), lines, frames,
    `WinDrawChars` for 68k code; 68k `BmpGetBits` on real bitmaps.
-3. r9 module tables: only the 9 entries Another World uses are known. A complete map would come
-   from PACE's trap-to-ARM table in the ROM.
+3. r9 module tables: the 466 entries reached by TwGlue stubs are mapped from the ROM
+   (`docs/twglue-rom-map.tsv`). Entries outside TwGlue (DAL mutexes and timers, Boot 726) are
+   still named from usage.
 4. Confirm uncertain semantics against the ROM implementation (TAL): the
    `TwGetDBDataDirectory` naming rule, input axis signs, `TwGfxBlendBlt` rounding.
 5. Bluetooth (BtLib*) and TwMp multiplayer are stubs.

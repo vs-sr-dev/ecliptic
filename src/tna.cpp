@@ -67,8 +67,9 @@ uint32_t load(Db* db, uint32_t rsrcType, uint16_t id) {
     cpu_fix_bx_pc_veneers(base, size);
     if (!g.opt.blocks_file.empty() && base == g.code_base) cpu_trace_blocks(base, size);
 
-    // 1st call: emulStateP == NULL, userData = TwGlue table (relocation + runtime init)
-    uint32_t r = cpu_call(base, {0, g.glue_table, g_call68k});
+    // 1st call: emulStateP == NULL, userData = TwGlue table (relocation + runtime init).
+    // The real ROM passes r2 = 0 here; only PilotMain gets Call68KFunc (logged by Frond).
+    uint32_t r = cpu_call(base, {0, g.glue_table, 0});
     LOG("TNA init returned %u", r);
     return g.quit ? 0 : base;
 }
