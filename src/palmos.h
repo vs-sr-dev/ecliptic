@@ -16,7 +16,8 @@ constexpr uint16_t dmErrMemError = dmErrorClass | 1, dmErrIndexOutOfRange = dmEr
                    dmErrResourceNotFound = dmErrorClass | 16, dmErrNoOpenDatabase = dmErrorClass | 17,
                    dmErrUniqueIDNotFound = dmErrorClass | 24, dmErrAlreadyExists = dmErrorClass | 25;
 constexpr uint16_t ftrErrNoSuchFeature = 0x0C00 | 2;
-constexpr uint16_t sysErrParamErr = sysErrorClass | 3, sysErrNotAllowed = sysErrorClass | 4,
+// SystemMgr.h: sysErrParamErr = 0x0502 (also seen from the real ROM's VFSVolumeEnumerate).
+constexpr uint16_t sysErrParamErr = sysErrorClass | 2, sysErrNotAllowed = sysErrorClass | 5,
                    sysErrLibNotFound = sysErrorClass | 10;
 
 constexpr uint16_t dmHdrAttrResDB = 0x0001;

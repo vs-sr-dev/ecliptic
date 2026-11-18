@@ -223,9 +223,13 @@ static uint32_t g_next_input = 1;
 static int32_t input_value(int32_t f, uint32_t seq) {
     uint32_t k = g_input.keys;
     switch (f) {
-        case 256: return g_input.pen_x;
-        case 257: return g_input.pen_y;
-        case 258: return g_input.pen_down ? 255 : 0;
+        // Pen x/y in screen pixels, down = 32767; all three read 0 while the pen is up
+        // (Frond TwGlue log on the real ROM, Origo).
+        case 256: return g_input.pen_down ? g_input.pen_x : 0;
+        case 257: return g_input.pen_down ? g_input.pen_y : 0;
+        case 258: return g_input.pen_down ? 32767 : 0;
+        // Stick x/y: -32767..32767, right and down positive, always in the device's landscape
+        // frame (not turned for portrait games: Firehammer on the real ROM).
         case 259: return g_input.joy_x;
         case 260: return g_input.joy_y;
         case 261: return (int32_t)k;
@@ -257,6 +261,7 @@ static int32_t input_value(int32_t f, uint32_t seq) {
         // "counter-clockwise from the right", but Xploids (verified by hand) expects screen
         // coordinates like NavY: right = 0, down = 90, up = 270.
         // CircX/CircY = R*cos/R*sin: documented but missing from TwInput.h, assumed 296/297.
+        // No known game asks for 296/297 (Frond's scan of 20 games); Xploids uses 298/299.
         case 296: case 297: case 298: case 299: {
             double x = g_input.joy_x, y = g_input.joy_y;
             double r = std::min(32767.0, std::sqrt(x * x + y * y));

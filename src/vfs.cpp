@@ -8,7 +8,8 @@
 
 namespace fs = std::filesystem;
 
-constexpr uint16_t VOL_REF = 1, SLOT_REF = 1;
+// The real ROM numbers the SD card volume 2 (TwGetDBDataDirectory and VFSVolumeEnumerate).
+constexpr uint16_t VOL_REF = 2, SLOT_REF = 1;
 constexpr uint16_t vfsErrFileGeneric = vfsErrorClass | 2, vfsErrFileBadRef = vfsErrorClass | 3,
                    vfsErrFileAlreadyExists = vfsErrorClass | 6, vfsErrFileEOF = vfsErrorClass | 7,
                    vfsErrFileNotFound = vfsErrorClass | 8, vfsErrVolumeBadRef = vfsErrorClass | 9,
@@ -68,12 +69,18 @@ HLE(VFSVolumeEnumerate) {
         if (!fs::is_directory(card_root(), ec) && !fs::create_directories(card_root(), ec)) {
             w16(a[0], 0); w32(a[1], vfsIteratorStop); return expErrEnumerationEmpty;
         }
+        // The real ROM returns the last volume and vfsIteratorStop in the same call.
+        // TODO: it also lists the internal volume 1 (with /DCIM) after the SD card (2).
         w16(a[0], VOL_REF);
         w32(a[1], vfsIteratorStop);
         return 0;
     }
+    // Called again with vfsIteratorStop: the real ROM writes 0 to volRefNum and returns
+    // sysErrParamErr (0x0502), leaving the iterator alone (Frond TwGlue log, 1.1 ROM).
+    // TODO: return sysErrParamErr once volume 1 exists. Doom looks for "c:" (slot 0) by
+    // enumerating until an error, and with only the SD card it hangs on 0x0502.
     w16(a[0], 0);   // vfsInvalidVolRef
-    w32(a[1], vfsIteratorStop);
+    if (it != vfsIteratorStop) w32(a[1], vfsIteratorStop);
     return expErrEnumerationEmpty;
 }
 HLE(VFSVolumeInfo) {
@@ -282,7 +289,8 @@ HLE(VFSDirEntryEnumerate) {
     uint32_t nameP = r32(info + 4);
     uint16_t len = r16(info + 8);
     if (nameP && len) wstr(nameP, e.filename().string().substr(0, len - 1));
-    w32(a[1], it + 1);   // the end is reported by the next call (like the FAT driver)
+    // The real ROM sets vfsIteratorStop in the call that returns the last entry.
+    w32(a[1], it + 1 < f->entries.size() ? it + 1 : vfsIteratorStop);
     return 0;
 }
 HLE(VFSGetDefaultDirectory) {
@@ -306,11 +314,14 @@ static std::string data_dir_for(Db* db) {
                 if (!s.empty()) return s;
             }
     }
+    // The ROM's path builder (Tapwave Application Layer, 0x202035e4): take the database name,
+    // cut a trailing ".prc", cut a trailing "-CRID", then append "-CRID". Confirmed by Frond's
+    // TwGlue log on the real ROM (Doom -> Doom-Doom, StreetHoops-STRT unchanged).
     std::string name = db ? db->name : "";
     std::string suffix = "-" + (db ? fourcc_str(db->creator) : std::string("????"));
-    // Names that already end in "-<creator>" are used as they are (e.g. "StreetHoops-STRT").
-    // TODO: confirm against the ROM implementation.
-    if (name.size() >= suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) suffix.clear();
+    auto ends = [&](const std::string& t) { return name.size() >= t.size() && name.compare(name.size() - t.size(), t.size(), t) == 0; };
+    if (ends(".prc")) name.resize(name.size() - 4);
+    if (ends(suffix)) name.resize(name.size() - suffix.size());
     // no trailing slash: callers append "/" themselves
     return "/PALM/Programs/" + name + suffix;
 }

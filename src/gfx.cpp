@@ -346,12 +346,22 @@ HLE(TwGfxTransparentBlt) {
     blit(d, dx, dy, s, sr, [key](uint16_t* dp, uint16_t c, int, int) { if (c != key) *dp = c; });
     return 0;
 }
+// The ROM (DAL 0x2009c1a0) cuts each 8-bit alpha channel to 4 bits, a4 = a8 * 15 / 255 rounded
+// down, and hands the blend to the graphics chip's global alpha. Only 16 levels exist.
+// The chip's per-pixel rounding is unknown; this follows Frond's assumption, per RGB565 channel
+// at its own width: floor((dst * (15 - a) + src * a) / 15). Unverified on real hardware.
+static inline int blend4(int s, int d, int a) { return (d * (15 - a) + s * a) / 15; }
 HLE(TwGfxBlendBlt) {
     BLIT_PROLOGUE
+    if (sr.w <= 0 || sr.h <= 0) return twGfxErrorInvalidCoord;   // the real ROM returns 0x7112 for a 0-wide rect
     uint32_t al = a[4];
-    int ar = ((al >> 16) & 0xFF), ag = ((al >> 8) & 0xFF), ab = (al & 0xFF);
-    ar += ar >> 7; ag += ag >> 7; ab += ab >> 7;   // 255 -> 256
-    blit(d, dx, dy, s, sr, [=](uint16_t* dp, uint16_t c, int, int) { *dp = blend565(c, *dp, ar, ag, ab); });
+    int ar = ((al >> 16) & 0xFF) * 15 / 255, ag = ((al >> 8) & 0xFF) * 15 / 255, ab = (al & 0xFF) * 15 / 255;
+    if ((ar | ag | ab) == 0) return 0;   // destination kept
+    blit(d, dx, dy, s, sr, [=](uint16_t* dp, uint16_t c, int, int) {
+        uint16_t t = *dp;
+        int r = blend4(c >> 11, t >> 11, ar), g = blend4((c >> 5) & 63, (t >> 5) & 63, ag), b = blend4(c & 31, t & 31, ab);
+        *dp = (uint16_t)(r << 11 | g << 5 | b);
+    });
     return 0;
 }
 
