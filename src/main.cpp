@@ -54,6 +54,7 @@ int main(int argc, char** argv) {
         std::string s = argv[i];
         auto next = [&]() -> std::string { if (i + 1 >= argc) usage(); return argv[++i]; };
         if (s == "--card") g.opt.card_dir = next();
+        else if (s == "--internal") g.opt.internal_dir = next();
         else if (s == "--rom") g.opt.rom_path = next();
         else if (s == "--ram") ram_dir = next();
         else if (s == "--install") installs.push_back(next());

@@ -136,15 +136,20 @@ sampled from the 144 dpi strike. The offset/width table holds `{offset, width}` 
   (Card Casino) end that way.
 - Features: `sysFtrNumROMVersion` is `0x05273002` (Palm OS 5.2.7, from the 1.1 ROM; the 1.0 ROM
   has 5.2.6), OEM company `'Tpwv'`, device `'Rdog'`. Launch stubs check the version.
-- The SD card volume always exists (the Zodiac has an internal card): a missing card directory is
-  created empty. FrodoZ quits when no volume is found.
+- Two volumes, as on the real 1.1 ROM (Frond's TwGlue log): the SD card is volume 2 (`--card`,
+  slotRef 2, slot number 2, 'vfat'/'sdig') and the internal 'twMF' file system is volume 1
+  (`--internal`, slotRef 3, slot number 0). Missing host directories are created empty (FrodoZ
+  quits when no volume is found). `TwGetSlotNumberForVolume` (TAL 26, 1.1 ROM `0x202031b0`) asks
+  the volume's slot driver for the number (custom control `'Tpwv'` selector 1) and falls back to
+  counting the non-'twMF' slots of `ExpSlotEnumerate`. Doom II maps `c:` to slot 0 and stops
+  enumerating volumes when it finds it.
 - `TwGetDBDataDirectory(NULL, ...)` refers to the running application. It returns
   `/PALM/Programs/<dbname>-<CRID>` with **no trailing slash**, because callers append "/". A name
   that already ends in `-<CRID>` is not suffixed again (StreetHoops-STRT). A `Twdp` #0 resource
   overrides the path.
-- `VFSVolumeEnumerate` writes volRefNum 0 when it runs out of volumes. `VFSDirEntryEnumerate`
-  reports the end of the list one call late, as the FAT driver does. X-Forge's file index depends
-  on both.
+- `VFSVolumeEnumerate` returns the last volume together with `vfsIteratorStop`; called again, it
+  writes volRefNum 0 and returns `sysErrParamErr` (0x0502). `VFSDirEntryEnumerate` also sets
+  `vfsIteratorStop` with the last entry. X-Forge's file index depends on both.
 - SndStream callbacks are ARM functions. They are pulled on the emulation thread, but only when no
   TwSemaphore is held, typically right after the game releases its last mutex.
 - `SysSetOrientation(portrait)` switches the framebuffer to 320x480 (Firehammer).

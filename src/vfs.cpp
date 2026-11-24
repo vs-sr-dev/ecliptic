@@ -1,4 +1,5 @@
-// VFS Manager / Expansion Manager HLE: one SD card volume backed by a host directory.
+// VFS Manager / Expansion Manager HLE: the SD card and the internal volume, each backed by a
+// host directory.
 #include "palmos.h"
 #include "audio.h"
 #include <cstdio>
@@ -8,8 +9,31 @@
 
 namespace fs = std::filesystem;
 
-// The real ROM numbers the SD card volume 2 (TwGetDBDataDirectory and VFSVolumeEnumerate).
-constexpr uint16_t VOL_REF = 2, SLOT_REF = 1;
+// Volumes as the real 1.1 ROM reports them (Frond's TwGlue log, VFSVolumeInfo from MTX):
+// VFSVolumeEnumerate lists the SD card (volume 2) and then the internal 'twMF' file system
+// (volume 1). Both are slot based (attributes = vfsVolumeAttrSlotBased).
+// TwGetSlotNumberForVolume (TAL 26, 1.1 ROM 0x202031b0) asks the volume's slot driver for the
+// slot number (slot custom control 'Tpwv' selector 1): the SD card in Frond's slot is 2 and the
+// internal volume 0. Games use it to map drive letters: Doom II's "c:" is slot 0.
+struct Volume {
+    uint16_t ref, slot_lib, slot_ref;
+    int16_t slot_no;
+    const char *fs_type, *fs_creator, *media, *label;
+    std::string Options::*dir;
+};
+const Volume kVolumes[] = {
+    {2, 3, 2, 2, "vfat", "fatf", "sdig", "SD CARD", &Options::card_dir},
+    {1, 4, 3, 0, "twMF", "twMF", "twMF", "Internal", &Options::internal_dir},
+};
+constexpr uint16_t VOL_REF = 2;   // the SD card: TwGetDBDataDirectory puts game data there
+static const Volume* volume(uint32_t ref) {
+    for (auto& v : kVolumes) if (v.ref == (ref & 0xFFFF)) return &v;
+    return nullptr;
+}
+static const Volume* slot(uint32_t slot_ref) {
+    for (auto& v : kVolumes) if (v.slot_ref == (slot_ref & 0xFFFF)) return &v;
+    return nullptr;
+}
 constexpr uint16_t vfsErrFileGeneric = vfsErrorClass | 2, vfsErrFileBadRef = vfsErrorClass | 3,
                    vfsErrFileAlreadyExists = vfsErrorClass | 6, vfsErrFileEOF = vfsErrorClass | 7,
                    vfsErrFileNotFound = vfsErrorClass | 8, vfsErrVolumeBadRef = vfsErrorClass | 9,
@@ -28,11 +52,17 @@ struct OpenFile {
 static std::map<uint32_t, OpenFile> g_files;
 static uint32_t g_next_ref = 0x1000;
 
-static fs::path card_root() { return fs::path(g.opt.card_dir); }
+static fs::path root(const Volume& v) { return fs::path(g.opt.*v.dir); }
+
+// The directory exists on first use (FrodoZ quits without a volume).
+static bool mounted(const Volume& v) {
+    std::error_code ec;
+    return fs::is_directory(root(v), ec) || fs::create_directories(root(v), ec);
+}
 
 // Resolve a Palm VFS path ("/PALM/Programs/x") to a host path, matching case-insensitively.
-static fs::path resolve(const std::string& vpath) {
-    fs::path cur = card_root();
+static fs::path resolve(const Volume& v, const std::string& vpath) {
+    fs::path cur = root(v);
     std::string p = vpath;
     for (auto& c : p) if (c == '\\') c = '/';
     size_t i = 0;
@@ -61,68 +91,77 @@ static uint32_t palm_time(fs::file_time_type t) {
 }
 
 HLE(VFSVolumeEnumerate) {
+    // The real ROM returns the last volume and vfsIteratorStop in the same call. Called again
+    // with vfsIteratorStop, it writes 0 (vfsInvalidVolRef) and returns sysErrParamErr, leaving
+    // the iterator alone.
     uint32_t it = r32(a[1]);
-    if (it == 0) {
-        std::error_code ec;
-        // The Zodiac always has a volume (its internal card, 'twS0' in the ROM): create an
-        // empty card directory rather than report none (FrodoZ quits without a volume).
-        if (!fs::is_directory(card_root(), ec) && !fs::create_directories(card_root(), ec)) {
-            w16(a[0], 0); w32(a[1], vfsIteratorStop); return expErrEnumerationEmpty;
-        }
-        // The real ROM returns the last volume and vfsIteratorStop in the same call.
-        // TODO: it also lists the internal volume 1 (with /DCIM) after the SD card (2).
-        w16(a[0], VOL_REF);
-        w32(a[1], vfsIteratorStop);
-        return 0;
-    }
-    // Called again with vfsIteratorStop: the real ROM writes 0 to volRefNum and returns
-    // sysErrParamErr (0x0502), leaving the iterator alone (Frond TwGlue log, 1.1 ROM).
-    // TODO: return sysErrParamErr once volume 1 exists. Doom looks for "c:" (slot 0) by
-    // enumerating until an error, and with only the SD card it hangs on 0x0502.
-    w16(a[0], 0);   // vfsInvalidVolRef
-    if (it != vfsIteratorStop) w32(a[1], vfsIteratorStop);
-    return expErrEnumerationEmpty;
-}
-HLE(VFSVolumeInfo) {
-    if ((a[0] & 0xFFFF) != VOL_REF) return vfsErrVolumeBadRef;
-    uint32_t p = a[1];
-    w32(p, 0); w32(p + 4, fourcc("vfat")); w32(p + 8, fourcc("vfat")); w32(p + 12, fourcc("libs"));
-    w16(p + 16, 0); w16(p + 18, SLOT_REF); w32(p + 20, fourcc("sdig")); w32(p + 24, 0);
+    constexpr uint32_t n = sizeof kVolumes / sizeof kVolumes[0];
+    while (it < n && !mounted(kVolumes[it])) it++;
+    if (it >= n) { w16(a[0], 0); return sysErrParamErr; }
+    w16(a[0], kVolumes[it].ref);
+    w32(a[1], it + 1 < n ? it + 1 : vfsIteratorStop);
     return 0;
 }
-HLE(VFSVolumeGetLabel) { if (a[1] && a[2]) wstr(a[1], std::string("SD CARD").substr(0, (a[2] & 0xFFFF) - 1)); return 0; }
+HLE(VFSVolumeInfo) {
+    const Volume* v = volume(a[0]);
+    if (!v) return vfsErrVolumeBadRef;
+    uint32_t p = a[1];
+    w32(p, 1); w32(p + 4, fourcc(v->fs_type)); w32(p + 8, fourcc(v->fs_creator)); w32(p + 12, fourcc("libs"));
+    w16(p + 16, v->slot_lib); w16(p + 18, v->slot_ref); w32(p + 20, fourcc(v->media)); w32(p + 24, 0);
+    return 0;
+}
+HLE(VFSVolumeGetLabel) {
+    const Volume* v = volume(a[0]);
+    if (!v) return vfsErrVolumeBadRef;
+    if (a[1] && a[2]) wstr(a[1], std::string(v->label).substr(0, (a[2] & 0xFFFF) - 1));
+    return 0;
+}
 HLE(VFSVolumeSize) {
+    const Volume* v = volume(a[0]);
+    if (!v) return vfsErrVolumeBadRef;
     std::error_code ec;
-    auto sp = fs::space(card_root(), ec);
+    auto sp = fs::space(root(*v), ec);
     uint64_t total = 1024ull * 1024 * 1024, freeb = 512ull * 1024 * 1024;
     if (!ec) { total = std::min<uint64_t>(sp.capacity, 0xFFFFFFFF); freeb = std::min<uint64_t>(sp.available, 0xFFFFFFFF); }
     if (a[1]) w32(a[1], (uint32_t)(total - std::min(total, freeb)));
     if (a[2]) w32(a[2], (uint32_t)total);
     return 0;
 }
+// The ROM's TwGetSlotNumberForVolume fallback walks ExpSlotEnumerate and checks each slot's media
+// type for 'twMF', so the internal volume is a slot too.
 HLE(ExpSlotEnumerate) {
     uint32_t it = r32(a[1]);
-    if (it == 0) { w16(a[0], SLOT_REF); w32(a[1], vfsIteratorStop); return 0; }
-    w16(a[0], 0);
-    w32(a[1], vfsIteratorStop);
-    return expErrEnumerationEmpty;
+    constexpr uint32_t n = sizeof kVolumes / sizeof kVolumes[0];
+    if (it >= n) { w16(a[0], 0); w32(a[1], vfsIteratorStop); return expErrEnumerationEmpty; }
+    w16(a[0], kVolumes[it].slot_ref);
+    w32(a[1], it + 1 < n ? it + 1 : vfsIteratorStop);
+    return 0;
 }
-HLE(ExpCardPresent) { return (a[0] & 0xFFFF) == SLOT_REF ? 0 : (expErrorClass | 3); }
+HLE(ExpCardPresent) { return slot(a[0]) ? 0 : (expErrorClass | 3); }
 HLE(ExpCardInfo) {
+    const Volume* v = slot(a[0]);
+    if (!v) return expErrorClass | 3;
     uint32_t p = a[1];   // capabilityFlags, manufacturerStr[32], productStr[32], deviceClassStr[32], deviceUniqueIDStr[32]
     mem_fill(p, 0, 4 + 32 * 4);
     w32(p, 1);
-    wstr(p + 4, "Ecliptic"); wstr(p + 36, "Virtual SD"); wstr(p + 68, "SD"); wstr(p + 100, "0001");
+    bool sd = v->ref == VOL_REF;
+    wstr(p + 4, "Ecliptic"); wstr(p + 36, sd ? "Virtual SD" : "Internal"); wstr(p + 68, sd ? "SD" : "twMF"); wstr(p + 100, "0001");
     return 0;
 }
-HLE(TwGetSlotNumberForVolume) { return (a[0] & 0xFFFF) == VOL_REF ? 1 : (uint32_t)-1; }
-HLE(TwGetSlotRefNumForSlot) { return (int16_t)a[0] == 1 ? SLOT_REF : 0; }
+// TwGetSlotNumberForVolume returns -1 for an unknown volume (its initial value in the ROM).
+HLE(TwGetSlotNumberForVolume) { const Volume* v = volume(a[0]); return v ? (uint32_t)(int32_t)v->slot_no : (uint32_t)-1; }
+// TwGetSlotRefNumForSlot (TAL 38): the slot whose driver reports this slot number, else 0.
+HLE(TwGetSlotRefNumForSlot) {
+    for (auto& v : kVolumes) if (v.slot_no == (int16_t)a[0]) return v.slot_ref;
+    return 0;
+}
 
 HLE(VFSFileOpen) {
-    if ((a[0] & 0xFFFF) != VOL_REF) return vfsErrVolumeBadRef;
+    const Volume* v = volume(a[0]);
+    if (!v || !mounted(*v)) return vfsErrVolumeBadRef;
     std::string vpath = rstr(a[1]);
     uint16_t mode = (uint16_t)a[2];
-    fs::path hp = resolve(vpath);
+    fs::path hp = resolve(*v, vpath);
     std::error_code ec;
     OpenFile of;
     of.host = hp;
@@ -245,7 +284,9 @@ HLE(VFSFileGetDate) {
 }
 HLE(VFSFileSetDate) { return 0; }
 HLE(VFSFileCreate) {
-    fs::path hp = resolve(rstr(a[1]));
+    const Volume* v = volume(a[0]);
+    if (!v || !mounted(*v)) return vfsErrVolumeBadRef;
+    fs::path hp = resolve(*v, rstr(a[1]));
     std::error_code ec;
     if (fs::exists(hp, ec)) return vfsErrFileAlreadyExists;
     if (!fs::is_directory(hp.parent_path(), ec)) return vfsErrDirectoryNotFound;
@@ -255,21 +296,27 @@ HLE(VFSFileCreate) {
     return 0;
 }
 HLE(VFSFileDelete) {
-    fs::path hp = resolve(rstr(a[1]));
+    const Volume* v = volume(a[0]);
+    if (!v || !mounted(*v)) return vfsErrVolumeBadRef;
+    fs::path hp = resolve(*v, rstr(a[1]));
     std::error_code ec;
     if (!fs::exists(hp, ec)) return vfsErrFileNotFound;
     if (!fs::remove(hp, ec)) return ec ? vfsErrDirNotEmpty : vfsErrFileGeneric;
     return 0;
 }
 HLE(VFSFileRename) {
-    fs::path hp = resolve(rstr(a[1]));
+    const Volume* v = volume(a[0]);
+    if (!v || !mounted(*v)) return vfsErrVolumeBadRef;
+    fs::path hp = resolve(*v, rstr(a[1]));
     std::error_code ec;
     fs::rename(hp, hp.parent_path() / rstr(a[2]), ec);
     return ec ? vfsErrFileGeneric : 0;
 }
 HLE(VFSDirCreate) {
     if (g.opt.trace) LOG("  VFSDirCreate path='%s'", rstr(a[1]).c_str());
-    fs::path hp = resolve(rstr(a[1]));
+    const Volume* v = volume(a[0]);
+    if (!v || !mounted(*v)) return vfsErrVolumeBadRef;
+    fs::path hp = resolve(*v, rstr(a[1]));
     std::error_code ec;
     if (fs::exists(hp, ec)) return vfsErrFileAlreadyExists;
     if (!fs::is_directory(hp.parent_path(), ec)) return vfsErrDirectoryNotFound;

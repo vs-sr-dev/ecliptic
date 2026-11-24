@@ -9,6 +9,7 @@ games/
 cards/
 ram/
 card/
+internal/
 
 # scratch output
 shots/

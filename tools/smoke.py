@@ -21,7 +21,8 @@ for f in games:
     name = os.path.splitext(os.path.basename(f))[0]
     shot = os.path.abspath(f'shots/smoke/{name}.bmp')
     slug = os.path.normpath(f).split(os.sep)[1]
-    card = ['--card', os.path.join('cards', slug)]   # created on first use if missing
+    card = ['--card', os.path.join('cards', slug),   # created on first use if missing
+            '--internal', os.path.join('cards', '_internal', slug)]
     try:
         r = subprocess.run([os.path.abspath('build/ecliptic.exe'), f, '--headless', '--exit-after', str(secs * 1000), '--screenshot', shot] + card,
                            capture_output=True, text=True, timeout=secs + 20, env=env, errors='replace')
