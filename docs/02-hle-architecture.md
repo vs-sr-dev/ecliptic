@@ -136,13 +136,19 @@ sampled from the 144 dpi strike. The offset/width table holds `{offset, width}` 
   (Card Casino) end that way.
 - Features: `sysFtrNumROMVersion` is `0x05273002` (Palm OS 5.2.7, from the 1.1 ROM; the 1.0 ROM
   has 5.2.6), OEM company `'Tpwv'`, device `'Rdog'`. Launch stubs check the version.
-- Two volumes, as on the real 1.1 ROM (Frond's TwGlue log): the SD card is volume 2 (`--card`,
-  slotRef 2, slot number 2, 'vfat'/'sdig') and the internal 'twMF' file system is volume 1
-  (`--internal`, slotRef 3, slot number 0). Missing host directories are created empty (FrodoZ
-  quits when no volume is found). `TwGetSlotNumberForVolume` (TAL 26, 1.1 ROM `0x202031b0`) asks
-  the volume's slot driver for the number (custom control `'Tpwv'` selector 1) and falls back to
-  counting the non-'twMF' slots of `ExpSlotEnumerate`. Doom II maps `c:` to slot 0 and stops
-  enumerating volumes when it finds it.
+- Slots and volumes as on the real 1.1 ROM (Frond running it, issue #1). `ExpSlotEnumerate`
+  always lists three slots: slotRef 1 is the left SD slot (driver 'twS2', volume 4, `--left-card`,
+  empty by default, `ExpCardPresent` = 0x2903), slotRef 2 the right SD slot ('twS1', volume 2,
+  `--card`) and slotRef 3 the internal 'twMF' file system ('twS0', volume 1, `--internal`).
+  `VFSVolumeEnumerate` lists the mounted volumes in the order 2, 4, 1. Missing host directories
+  are created empty (FrodoZ quits when no volume is found).
+- Slot numbers: right SD 2, left SD 1, internal 0. `TwGetSlotNumberForVolume` (TAL 26, 1.1 ROM
+  `0x202031b0`) preloads the volume's slotRef into a UInt16 and calls the slot driver's
+  `SlotCustomControl('Tpwv', 1)` on it: 'twS2' writes 1 and 'twS1' writes 2 whatever the input,
+  'twS0' writes 0 only if the input is its own slotRef (else 0x2904). If the call fails, TAL
+  counts the non-'twMF' slots of `ExpSlotEnumerate`. `TwGetSlotRefNumForSlot` (TAL 38) is the
+  inverse: 0 -> 3, 1 -> 1, 2 -> 2, else 0. Doom II maps `c:` to slot 0 and stops enumerating
+  volumes when it finds it.
 - `TwGetDBDataDirectory(NULL, ...)` refers to the running application. It returns
   `/PALM/Programs/<dbname>-<CRID>` with **no trailing slash**, because callers append "/". A name
   that already ends in `-<CRID>` is not suffixed again (StreetHoops-STRT). A `Twdp` #0 resource

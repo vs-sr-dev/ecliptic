@@ -9,20 +9,26 @@
 
 namespace fs = std::filesystem;
 
-// Volumes as the real 1.1 ROM reports them (Frond's TwGlue log, VFSVolumeInfo from MTX):
-// VFSVolumeEnumerate lists the SD card (volume 2) and then the internal 'twMF' file system
-// (volume 1). Both are slot based (attributes = vfsVolumeAttrSlotBased).
-// TwGetSlotNumberForVolume (TAL 26, 1.1 ROM 0x202031b0) asks the volume's slot driver for the
-// slot number (slot custom control 'Tpwv' selector 1): the SD card in Frond's slot is 2 and the
-// internal volume 0. Games use it to map drive letters: Doom II's "c:" is slot 0.
+// Slots and volumes as the real 1.1 ROM reports them (Frond running the ROM, issue #1).
+// ExpSlotEnumerate always lists three slots, even with no card in them:
+//   slotRef 1: left SD slot, driver 'twS2' (slot lib 2), slot number 1, volume 4
+//   slotRef 2: right SD slot, driver 'twS1' (slot lib 3), slot number 2, volume 2
+//   slotRef 3: internal 'twMF' file system, driver 'twS0' (slot lib 4), slot number 0, volume 1
+// VFSVolumeEnumerate lists the mounted volumes in the order 2, 4, 1. All are slot based
+// (attributes = vfsVolumeAttrSlotBased).
+// TwGetSlotNumberForVolume (TAL 26, 1.1 ROM 0x202031b0) asks the volume's slot driver with
+// SlotCustomControl('Tpwv', 1), *valueP preloaded with the slotRef: 'twS2' writes 1 and 'twS1'
+// writes 2, whatever the input; 'twS0' writes 0 only if the input is its own slotRef. Games use it
+// to map drive letters: Doom II's "c:" is slot 0.
 struct Volume {
     uint16_t ref, slot_lib, slot_ref;
     int16_t slot_no;
     const char *fs_type, *fs_creator, *media, *label;
     std::string Options::*dir;
 };
-const Volume kVolumes[] = {
+const Volume kVolumes[] = {   // in VFSVolumeEnumerate order
     {2, 3, 2, 2, "vfat", "fatf", "sdig", "SD CARD", &Options::card_dir},
+    {4, 2, 1, 1, "vfat", "fatf", "sdig", "SD CARD", &Options::left_card_dir},
     {1, 4, 3, 0, "twMF", "twMF", "twMF", "Internal", &Options::internal_dir},
 };
 constexpr uint16_t VOL_REF = 2;   // the SD card: TwGetDBDataDirectory puts game data there
@@ -54,10 +60,16 @@ static uint32_t g_next_ref = 0x1000;
 
 static fs::path root(const Volume& v) { return fs::path(g.opt.*v.dir); }
 
-// The directory exists on first use (FrodoZ quits without a volume).
+// A volume is mounted when its host directory is set; the directory is created on first use
+// (FrodoZ quits without a volume). The left slot has no card unless --left-card is given.
 static bool mounted(const Volume& v) {
+    if ((g.opt.*v.dir).empty()) return false;
     std::error_code ec;
     return fs::is_directory(root(v), ec) || fs::create_directories(root(v), ec);
+}
+static const Volume* mounted_volume(uint32_t ref) {
+    const Volume* v = volume(ref);
+    return v && mounted(*v) ? v : nullptr;
 }
 
 // Resolve a Palm VFS path ("/PALM/Programs/x") to a host path, matching case-insensitively.
@@ -103,7 +115,7 @@ HLE(VFSVolumeEnumerate) {
     return 0;
 }
 HLE(VFSVolumeInfo) {
-    const Volume* v = volume(a[0]);
+    const Volume* v = mounted_volume(a[0]);
     if (!v) return vfsErrVolumeBadRef;
     uint32_t p = a[1];
     w32(p, 1); w32(p + 4, fourcc(v->fs_type)); w32(p + 8, fourcc(v->fs_creator)); w32(p + 12, fourcc("libs"));
@@ -111,13 +123,13 @@ HLE(VFSVolumeInfo) {
     return 0;
 }
 HLE(VFSVolumeGetLabel) {
-    const Volume* v = volume(a[0]);
+    const Volume* v = mounted_volume(a[0]);
     if (!v) return vfsErrVolumeBadRef;
     if (a[1] && a[2]) wstr(a[1], std::string(v->label).substr(0, (a[2] & 0xFFFF) - 1));
     return 0;
 }
 HLE(VFSVolumeSize) {
-    const Volume* v = volume(a[0]);
+    const Volume* v = mounted_volume(a[0]);
     if (!v) return vfsErrVolumeBadRef;
     std::error_code ec;
     auto sp = fs::space(root(*v), ec);
@@ -127,30 +139,31 @@ HLE(VFSVolumeSize) {
     if (a[2]) w32(a[2], (uint32_t)total);
     return 0;
 }
-// The ROM's TwGetSlotNumberForVolume fallback walks ExpSlotEnumerate and checks each slot's media
-// type for 'twMF', so the internal volume is a slot too.
+// slotRefs 1, 2, 3 in that order, whether or not a card is in.
 HLE(ExpSlotEnumerate) {
     uint32_t it = r32(a[1]);
     constexpr uint32_t n = sizeof kVolumes / sizeof kVolumes[0];
     if (it >= n) { w16(a[0], 0); w32(a[1], vfsIteratorStop); return expErrEnumerationEmpty; }
-    w16(a[0], kVolumes[it].slot_ref);
+    w16(a[0], (uint16_t)(it + 1));
     w32(a[1], it + 1 < n ? it + 1 : vfsIteratorStop);
     return 0;
 }
-HLE(ExpCardPresent) { return slot(a[0]) ? 0 : (expErrorClass | 3); }
+// expErrCardNotPresent (0x2903) for an empty slot, as the real left slot driver.
+HLE(ExpCardPresent) { const Volume* v = slot(a[0]); return v && mounted(*v) ? 0 : (expErrorClass | 3); }
 HLE(ExpCardInfo) {
     const Volume* v = slot(a[0]);
-    if (!v) return expErrorClass | 3;
+    if (!v || !mounted(*v)) return expErrorClass | 3;
     uint32_t p = a[1];   // capabilityFlags, manufacturerStr[32], productStr[32], deviceClassStr[32], deviceUniqueIDStr[32]
     mem_fill(p, 0, 4 + 32 * 4);
     w32(p, 1);
-    bool sd = v->ref == VOL_REF;
+    bool sd = v->media[0] == 's';
     wstr(p + 4, "Ecliptic"); wstr(p + 36, sd ? "Virtual SD" : "Internal"); wstr(p + 68, sd ? "SD" : "twMF"); wstr(p + 100, "0001");
     return 0;
 }
-// TwGetSlotNumberForVolume returns -1 for an unknown volume (its initial value in the ROM).
-HLE(TwGetSlotNumberForVolume) { const Volume* v = volume(a[0]); return v ? (uint32_t)(int32_t)v->slot_no : (uint32_t)-1; }
-// TwGetSlotRefNumForSlot (TAL 38): the slot whose driver reports this slot number, else 0.
+// TwGetSlotNumberForVolume returns -1 for a volume that isn't mounted (volumes 0, 0xffff...).
+HLE(TwGetSlotNumberForVolume) { const Volume* v = mounted_volume(a[0]); return v ? (uint32_t)(int32_t)v->slot_no : (uint32_t)-1; }
+// TwGetSlotRefNumForSlot (TAL 38): the slot whose driver reports this slot number, else 0
+// (the slot drivers answer with or without a card): 0 -> 3, 1 -> 1, 2 -> 2, others -> 0.
 HLE(TwGetSlotRefNumForSlot) {
     for (auto& v : kVolumes) if (v.slot_no == (int16_t)a[0]) return v.slot_ref;
     return 0;

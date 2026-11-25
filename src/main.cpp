@@ -30,7 +30,8 @@ uint32_t now_ms() {
 static void usage() {
     fprintf(stderr,
             "usage: ecliptic GAME.prc [options]\n"
-            "  --card DIR          host directory mounted as the SD card (default: card)\n"
+            "  --card DIR          host directory mounted as the SD card in the right slot (default: card)\n"
+            "  --left-card DIR     host directory mounted as a second SD card, in the left slot\n"
             "  --rom FILE          Zodiac ROM image (default: ref/roms/zodiac_1.1.rom)\n"
             "  --ram DIR           where databases created by the game are saved (default: ram)\n"
             "  --install FILE      extra PRC/PDB to load into RAM (repeatable)\n"
@@ -55,6 +56,7 @@ int main(int argc, char** argv) {
         auto next = [&]() -> std::string { if (i + 1 >= argc) usage(); return argv[++i]; };
         if (s == "--card") g.opt.card_dir = next();
         else if (s == "--internal") g.opt.internal_dir = next();
+        else if (s == "--left-card") g.opt.left_card_dir = next();
         else if (s == "--rom") g.opt.rom_path = next();
         else if (s == "--ram") ram_dir = next();
         else if (s == "--install") installs.push_back(next());

@@ -34,7 +34,8 @@ constexpr uint32_t TRAP_RETURN = 0xFFF;  // return sentinel for host->ARM calls
 // ---------------------------------------------------------------------------
 struct Options {
     std::string prc_path;
-    std::string card_dir = "card";      // host directory mounted as the SD card volume
+    std::string card_dir = "card";      // host directory mounted as the right SD slot's card (volume 2)
+    std::string left_card_dir;          // the left SD slot's card (volume 4); empty = no card
     std::string internal_dir = "internal";   // host directory mounted as the internal volume 1
     std::string rom_path;               // Zodiac ROM image (databases, DRM ranges)
     bool trace = false;                 // log every TwGlue call
